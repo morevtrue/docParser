@@ -19,6 +19,18 @@ docker compose up -d --build
 - Приложение: http://localhost:5173
 - API (Swagger): http://localhost:8000/docs
 
+## Проверить состояние docker-контейнеров
+
+```bash
+docker ps
+```
+
+## Проверить логи docker-контейнеров
+
+```bash
+docker logs название_контейнера
+```
+
 ## Остановка
 
 ```bash
