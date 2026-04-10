@@ -14,9 +14,9 @@ from .models.schemas import ExtractedData, ParsingReport, FieldStatus
 app = FastAPI(title="DocParser API")
 
 CLASSIFIERS = {
-    "customer_request": ["запрос технико-коммерческого предложения", "запрос ткп", "номер закупки"],
-    "supplier_card":    ["карточка поставщика"],
-    "commercial_terms": ["коммерческие условия и цены", "коммерческие условия"],
+    "customer_request": ["запрос технико-коммерческого предложения", "запрос ткп", "номер закупки", "техническо-коммерческий запрос", "технико-коммерческий запрос"],
+    "supplier_card":    ["карточка поставщика", "досье поставщика"],
+    "commercial_terms": ["коммерческие условия и цены", "коммерческие условия", "коммерческое предложение поставщика"],
 }
 
 TEMPLATE_CLASSIFIERS = {

@@ -167,22 +167,42 @@ def _scan_placeholders(doc: Document) -> set[str]:
 
 def _replace_in_paragraph(paragraph, replacements: dict[str, str]) -> bool:
     """
-    Заменяет плейсхолдеры в параграфе.
-    Сохраняет форматирование первого run, очищает остальные.
+    Заменяет плейсхолдеры в параграфе, сохраняя форматирование runs.
+
+    Алгоритм:
+    1. Сначала пробуем заменить внутри каждого run по отдельности
+       (плейсхолдер целиком в одном run — форматирование сохраняется).
+    2. Если плейсхолдер разбит между runs — склеиваем все runs параграфа
+       в первый run (берём его форматирование), заменяем, очищаем остальные.
     """
+    # Шаг 1: замена внутри отдельных runs
+    changed = False
+    for run in paragraph.runs:
+        new_text = run.text
+        for placeholder, value in replacements.items():
+            if placeholder in new_text:
+                new_text = new_text.replace(placeholder, value)
+        if new_text != run.text:
+            run.text = new_text
+            changed = True
+
+    # Шаг 2: проверяем, остались ли незамененные плейсхолдеры (разбиты между runs)
     full_text = paragraph.text
-    new_text = full_text
-    for placeholder, value in replacements.items():
-        new_text = new_text.replace(placeholder, value)
+    remaining = {ph: val for ph, val in replacements.items() if ph in full_text}
+    if not remaining:
+        return changed
 
-    if new_text == full_text:
-        return False
-
+    # Склеиваем все runs в первый, применяем замены
     if paragraph.runs:
-        paragraph.runs[0].text = new_text
+        merged = full_text
+        for placeholder, value in remaining.items():
+            merged = merged.replace(placeholder, value)
+        paragraph.runs[0].text = merged
         for run in paragraph.runs[1:]:
             run.text = ""
-    return True
+        return True
+
+    return changed
 
 
 def _replace_in_cell(cell, replacements: dict[str, str]):
@@ -258,6 +278,29 @@ def _set_cell_text(cell, value: str):
         para.add_run(value)
 
 
+def _detect_price_output_columns(header_cells: list[str]) -> dict[int, str]:
+    """
+    Семантически определяет маппинг колонок таблицы номенклатуры шаблона по заголовкам.
+    Возвращает {col_idx: field_name}.
+    """
+    mapping = {}
+    for i, h in enumerate(header_cells):
+        h_lower = h.lower().strip()
+        if any(kw in h_lower for kw in ["наименование", "название", "товар", "продукция"]):
+            mapping[i] = "name"
+        elif any(kw in h_lower for kw in ["ед. изм", "ед.изм", "единица", "ед."]):
+            mapping[i] = "unit"
+        elif any(kw in h_lower for kw in ["нмц", "нмц за ед", "нмц, руб"]):
+            mapping[i] = "nmc"
+        elif any(kw in h_lower for kw in ["цена без ндс", "цена без", "цена за ед"]):
+            mapping[i] = "price_without_vat"
+        elif any(kw in h_lower for kw in ["количество", "кол-во", "кол."]):
+            mapping[i] = "quantity"
+        elif any(kw in h_lower for kw in ["сумма без ндс", "сумма без", "итого без", "сумма"]):
+            mapping[i] = "total_without_vat"
+    return mapping
+
+
 def fill_price_template(
     template_source,
     data: ExtractedData,
@@ -284,26 +327,30 @@ def fill_price_template(
     # Заполняем таблицу номенклатуры (Таблица 0)
     if ct and ct.items and len(doc.tables) > 0:
         price_table = doc.tables[0]
-        for i, item in enumerate(ct.items):
-            row_idx = i + 1
-            if row_idx >= len(price_table.rows):
-                break
-            cells = price_table.rows[row_idx].cells
-            if len(cells) < 7:
-                continue
+        if price_table.rows:
+            # Семантически определяем колонки по заголовку
+            header_cells = [c.text.strip().lower() for c in price_table.rows[0].cells]
+            col_map = _detect_price_output_columns(header_cells)
 
-            for col_idx, field in PRICE_TABLE_COLUMNS.items():
-                if field == "nmc":
-                    value = nmc_by_index.get(i, "")
-                elif field == "total_without_vat":
-                    raw = getattr(item, field, "") or ""
-                    value = _format_money(raw) if raw else ""
-                else:
-                    value = getattr(item, field, "") or ""
-                _set_cell_text(cells[col_idx], value)
+            for i, item in enumerate(ct.items):
+                row_idx = i + 1
+                if row_idx >= len(price_table.rows):
+                    break
+                cells = price_table.rows[row_idx].cells
+
+                for col_idx, field in col_map.items():
+                    if col_idx >= len(cells):
+                        continue
+                    if field == "nmc":
+                        value = nmc_by_index.get(i, "")
+                    elif field == "total_without_vat":
+                        raw = getattr(item, field, "") or ""
+                        value = _format_money(raw) if raw else ""
+                    else:
+                        value = getattr(item, field, "") or ""
+                    _set_cell_text(cells[col_idx], value)
 
     # Остальные плейсхолдеры через стандартный механизм
-    # Сохраняем doc и применяем замены поверх уже заполненной таблицы
     placeholders = _scan_placeholders(doc)
     replacements: dict[str, str] = {}
     log: dict = {"found": [], "warnings": [], "unmapped": []}

@@ -5,17 +5,54 @@ from ..models.schemas import CustomerRequest, CustomerRequestItem
 from typing import Optional
 
 
+def _detect_items_table_columns(header_cells: list[str]) -> dict[int, str]:
+    """
+    Семантически определяет маппинг колонок таблицы номенклатуры по заголовкам.
+    Возвращает {col_idx: field_name}.
+    """
+    mapping = {}
+    for i, h in enumerate(header_cells):
+        h_lower = h.lower().strip()
+        if any(kw in h_lower for kw in ["наименование", "название", "товар"]):
+            mapping[i] = "name"
+        elif any(kw in h_lower for kw in ["ед. изм", "ед.изм", "единица", "ед."]):
+            mapping[i] = "unit"
+        elif any(kw in h_lower for kw in ["количество", "кол-во", "кол."]):
+            mapping[i] = "quantity"
+        elif any(kw in h_lower for kw in ["нмц", "нмц за ед", "нмц, руб"]):
+            mapping[i] = "nmc"
+        elif any(kw in h_lower for kw in ["артикул", "арт."]):
+            mapping[i] = "article"
+        elif any(kw in h_lower for kw in ["код позиции", "код"]):
+            mapping[i] = "code"
+        elif any(kw in h_lower for kw in ["требуемая дата", "дата поставки", "срок"]):
+            mapping[i] = "required_date"
+        elif h_lower in ("№", "#", "номер", "n"):
+            mapping[i] = "number"
+    return mapping
+
+
 def parse_customer_request(doc: Document, source: str = "") -> CustomerRequest:
     """
     Извлекает данные из документа «Запрос ТКП».
-    Использует семантический поиск по ключевым словам в параграфах и таблицах.
+    Поддерживает как стандартный формат (параграфы + таблицы),
+    так и объединённые поля (Закупка/лот/код, данные в таблице).
     """
     paragraphs = get_all_paragraphs(doc)
 
-    # Собираем все пары ключ-значение из всех таблиц
+    # Собираем все пары ключ-значение из всех таблиц (кроме таблицы номенклатуры)
     all_pairs: list[tuple[str, str]] = []
-    for table in doc.tables:
-        all_pairs.extend(get_table_as_pairs(table))
+    items_table_idx = None
+
+    for ti, table in enumerate(doc.tables):
+        if not table.rows:
+            continue
+        header = [c.text.strip().lower() for c in table.rows[0].cells]
+        # Таблица номенклатуры — содержит НМЦ или наименование товара
+        if any(any(kw in h for kw in ["нмц", "наименование", "артикул"]) for h in header):
+            items_table_idx = ti
+        else:
+            all_pairs.extend(get_table_as_pairs(table))
 
     def from_para(keywords: list[str]) -> Optional[str]:
         return find_in_paragraphs(paragraphs, keywords)
@@ -23,13 +60,20 @@ def parse_customer_request(doc: Document, source: str = "") -> CustomerRequest:
     def from_table(keywords: list[str]) -> Optional[str]:
         return find_value_by_keywords(all_pairs, keywords)
 
-    # Номер закупки, лот, код лота — в одном параграфе через пробелы
+    # Предмет закупки — из параграфа или таблицы
+    purchase_name = from_para(["предмет закупки"]) or from_table(["предмет закупки"])
+
+    # Заказчик
+    customer_name = from_para(["заказчик"]) or from_table(["заказчик"])
+
+    # Номер закупки, лот, код лота
     purchase_number = None
     lot = None
     lot_code = None
+
+    # Стандартный формат: параграф "Номер закупки: X    Лот: Y    Код лота: Z"
     for para in paragraphs:
         if "номер закупки" in para.lower():
-            # Формат: "Номер закупки: X    Лот: Y    Код лота: Z"
             parts = para.replace("\t", " ")
             for segment in parts.split("  "):
                 segment = segment.strip()
@@ -45,35 +89,60 @@ def parse_customer_request(doc: Document, source: str = "") -> CustomerRequest:
                     lot_code = v
             break
 
-    # Заказчик — из параграфа "Заказчик: ..."
-    customer_name = from_para(["заказчик"])
-
-    # Предмет закупки
-    purchase_name = from_para(["предмет закупки"])
+    # Объединённое поле: "Закупка / лот / код" → "TEST-2026-001 / Лот 1 / PE-26-001-L1"
+    if not purchase_number:
+        combined = from_table(["закупка / лот", "закупка/лот", "номер / лот", "закупка"])
+        if combined and "/" in combined:
+            parts = [p.strip() for p in combined.split("/")]
+            purchase_number = parts[0] if parts else None
+            if len(parts) > 1:
+                lot = parts[1]
+            if len(parts) > 2:
+                lot_code = parts[2]
+        elif combined:
+            purchase_number = combined
 
     # Срок подачи предложений
-    deadline = from_para(["срок подачи"])
+    deadline = from_para(["срок подачи"]) or from_table(["срок подачи предложений", "срок подачи"])
 
-    # Место поставки
-    delivery_place = from_para(["место поставки"])
+    # Место поставки — из параграфа или таблицы
+    delivery_place = from_para(["место поставки"]) or from_table(["место поставки", "адрес поставки"])
+    if not delivery_place:
+        for para in paragraphs:
+            if "адрес поставки" in para.lower() or "место поставки" in para.lower():
+                if ":" in para:
+                    delivery_place = para.split(":", 1)[1].strip()
+                    break
 
     # Срок поставки
-    delivery_term = from_para(["срок поставки"])
+    delivery_term = from_para(["срок поставки"]) or from_table(["срок поставки"])
+    if not delivery_term:
+        for para in paragraphs:
+            if "срок поставки" in para.lower() or "требуемый срок поставки" in para.lower():
+                if ":" in para:
+                    delivery_term = para.split(":", 1)[1].strip()
+                    break
 
-    # Условия оплаты — может быть без двоеточия, ищем параграф целиком
-    payment_term = from_para(["оплата"])
+    # Условия оплаты
+    payment_term = from_para(["оплата"]) or from_table(["условия оплаты", "оплата"])
     if not payment_term:
         for para in paragraphs:
-            if "оплата" in para.lower() and "календарных дней" in para.lower():
-                payment_term = para
+            if "оплата" in para.lower() and (":" in para or "календарных дней" in para.lower()):
+                if ":" in para:
+                    payment_term = para.split(":", 1)[1].strip()
+                else:
+                    payment_term = para
                 break
 
-    # Гарантийный срок — может быть без двоеточия
-    warranty = from_para(["гарантийный срок"])
+    # Гарантийный срок
+    warranty = from_para(["гарантийный срок"]) or from_table(["гарантийный срок", "гарантия"])
     if not warranty:
         for para in paragraphs:
-            if "гарантийный срок" in para.lower():
-                warranty = para
+            if "гарантийн" in para.lower():
+                if ":" in para:
+                    warranty = para.split(":", 1)[1].strip()
+                else:
+                    warranty = para
                 break
 
     # Email контакта
@@ -84,30 +153,52 @@ def parse_customer_request(doc: Document, source: str = "") -> CustomerRequest:
                 if "@" in part:
                     contact_email = part.strip(".,;")
                     break
+    if not contact_email:
+        # Ищем в таблицах
+        for key, value in all_pairs:
+            if "контакт" in key.lower() or "email" in key.lower() or "e-mail" in key.lower():
+                for part in value.split():
+                    if "@" in part:
+                        contact_email = part.strip(".,;")
+                        break
 
-    # Позиции из таблицы (НМЦ и наименования)
+    # Позиции из таблицы номенклатуры — семантическое определение колонок
     items = []
-    for table in doc.tables:
+    if items_table_idx is not None:
+        table = doc.tables[items_table_idx]
         rows = table.rows
-        if not rows:
-            continue
-        header = [c.text.strip().lower() for c in rows[0].cells]
-        # Ищем таблицу с колонкой НМЦ
-        if any("нмц" in h for h in header):
+        if rows:
+            header_cells = [c.text.strip() for c in rows[0].cells]
+            col_map = _detect_items_table_columns(header_cells)
+
             for row in rows[1:]:
                 cells = [c.text.strip() for c in row.cells]
-                if len(cells) >= 7 and cells[0].isdigit():
-                    items.append(CustomerRequestItem(
-                        number=cells[0],
-                        code=cells[1] if len(cells) > 1 else None,
-                        article=cells[2] if len(cells) > 2 else None,
-                        name=cells[3] if len(cells) > 3 else None,
-                        quantity=cells[4] if len(cells) > 4 else None,
-                        unit=cells[5] if len(cells) > 5 else None,
-                        nmc=cells[6] if len(cells) > 6 else None,
-                        required_date=cells[7] if len(cells) > 7 else None,
-                    ))
-            break
+                if not any(cells):
+                    continue
+
+                item_data = {}
+                for col_idx, field in col_map.items():
+                    if col_idx < len(cells):
+                        item_data[field] = cells[col_idx] or None
+
+                # Пропускаем строки без наименования
+                if not item_data.get("name"):
+                    continue
+
+                # Номер строки — если не найден в колонке, используем порядковый
+                if not item_data.get("number"):
+                    item_data["number"] = str(len(items) + 1)
+
+                items.append(CustomerRequestItem(
+                    number=item_data.get("number"),
+                    code=item_data.get("code"),
+                    article=item_data.get("article"),
+                    name=item_data.get("name"),
+                    quantity=item_data.get("quantity"),
+                    unit=item_data.get("unit"),
+                    nmc=item_data.get("nmc"),
+                    required_date=item_data.get("required_date"),
+                ))
 
     return CustomerRequest(
         purchase_name=purchase_name,
