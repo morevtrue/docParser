@@ -22,7 +22,6 @@ docker compose up -d --build
 ## Остановка
 
 ```bash
-# Ctrl+C в терминале, или в другом окне:
 docker compose down
 ```
 
