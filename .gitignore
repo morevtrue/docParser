@@ -1,0 +1,32 @@
+# IDE / Kiro
+.kiro/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docker build artifacts
+*.log
+
+# Output documents (генерируются системой)
+output/
+
+# OS
+.DS_Store
+Thumbs.db
