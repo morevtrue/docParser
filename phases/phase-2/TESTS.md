@@ -4,17 +4,20 @@
 
 | # | Проверка | Команда | Ожидаемый результат | Статус |
 |---|----------|---------|---------------------|--------|
-| 1 | Парсер CustomerRequest | python тест (см. ниже) | Все поля заполнены | ✅ |
+| 1 | Парсер CustomerRequest | python тест | Все 11 полей заполнены, 3 позиции НМЦ | ✅ |
 | 2 | Парсер SupplierCard | python тест | Все 17 полей заполнены | ✅ |
 | 3 | Парсер CommercialTerms | python тест | 10 полей + 3 позиции | ✅ |
-| 4 | POST /api/process через Swagger | docker compose up + /docs | JSON с extracted + report | ⬜ |
-| 5 | Валидация не-DOCX файла | curl с .txt файлом | 400 Bad Request | ⬜ |
-| 6 | Классификация документов | POST с тремя файлами | Все три типа определены | ⬜ |
+| 4 | POST /api/process через Docker | python requests | 200 + ZIP, 3 DOCX + report.json | ✅ |
+| 5 | Валидация не-DOCX файла | python requests | 400 + сообщение об ошибке | ✅ |
+| 6 | Классификация документов | POST с 6 файлами | Все три типа определены, 3 шаблона заполнены | ✅ |
+
+## Примечания
+
+- Запрос без файлов возвращает 422 (FastAPI validation) вместо 400 — приемлемо для MVP
 
 ## Как запустить локальный тест парсеров
 
 ```bash
-cd C:\dev\homelio_test
 python -c "
 import sys; sys.path.insert(0, 'backend')
 from docx import Document

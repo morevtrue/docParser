@@ -2,6 +2,18 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class CustomerRequestItem(BaseModel):
+    """Позиция из таблицы запроса ТКП."""
+    number: Optional[str] = None
+    code: Optional[str] = None
+    article: Optional[str] = None
+    name: Optional[str] = None
+    quantity: Optional[str] = None
+    unit: Optional[str] = None
+    nmc: Optional[str] = None          # НМЦ (начальная максимальная цена)
+    required_date: Optional[str] = None
+
+
 class CustomerRequest(BaseModel):
     """Данные из запроса ТКП (от заказчика)."""
     purchase_name: Optional[str] = None       # Предмет закупки
@@ -15,6 +27,7 @@ class CustomerRequest(BaseModel):
     payment_term: Optional[str] = None        # Условия оплаты
     warranty: Optional[str] = None            # Гарантийный срок
     contact_email: Optional[str] = None       # Email контакта
+    items: list["CustomerRequestItem"] = []   # Позиции из таблицы
 
 
 class SupplierCard(BaseModel):
@@ -82,4 +95,5 @@ class ParsingReport(BaseModel):
     """Отчёт об обработке документов."""
     found: list[FieldStatus] = []
     warnings: list[FieldStatus] = []
+    unmapped: list[str] = []    # плейсхолдеры из шаблона, которых нет в FIELD_MAP
     errors: list[str] = []

@@ -1,7 +1,7 @@
 """Парсер запроса ТКП (документ от заказчика)."""
 from docx import Document
 from .base import get_all_paragraphs, get_table_as_pairs, find_in_paragraphs, find_value_by_keywords
-from ..models.schemas import CustomerRequest
+from ..models.schemas import CustomerRequest, CustomerRequestItem
 from typing import Optional
 
 
@@ -85,6 +85,30 @@ def parse_customer_request(doc: Document, source: str = "") -> CustomerRequest:
                     contact_email = part.strip(".,;")
                     break
 
+    # Позиции из таблицы (НМЦ и наименования)
+    items = []
+    for table in doc.tables:
+        rows = table.rows
+        if not rows:
+            continue
+        header = [c.text.strip().lower() for c in rows[0].cells]
+        # Ищем таблицу с колонкой НМЦ
+        if any("нмц" in h for h in header):
+            for row in rows[1:]:
+                cells = [c.text.strip() for c in row.cells]
+                if len(cells) >= 7 and cells[0].isdigit():
+                    items.append(CustomerRequestItem(
+                        number=cells[0],
+                        code=cells[1] if len(cells) > 1 else None,
+                        article=cells[2] if len(cells) > 2 else None,
+                        name=cells[3] if len(cells) > 3 else None,
+                        quantity=cells[4] if len(cells) > 4 else None,
+                        unit=cells[5] if len(cells) > 5 else None,
+                        nmc=cells[6] if len(cells) > 6 else None,
+                        required_date=cells[7] if len(cells) > 7 else None,
+                    ))
+            break
+
     return CustomerRequest(
         purchase_name=purchase_name,
         purchase_number=purchase_number,
@@ -97,4 +121,5 @@ def parse_customer_request(doc: Document, source: str = "") -> CustomerRequest:
         payment_term=payment_term,
         warranty=warranty,
         contact_email=contact_email,
+        items=items,
     )

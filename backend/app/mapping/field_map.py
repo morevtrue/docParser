@@ -1,45 +1,58 @@
 """
-Маппинг полей: какие поля из каких документов берутся для заполнения шаблонов.
-Структура: {поле_шаблона: {source: тип_документа, field: поле_DTO}}
+Единый конфигурируемый маппинг плейсхолдеров шаблонов → поля DTO.
+
+Структура каждой записи:
+  placeholder  — точная строка плейсхолдера в шаблоне (включая скобки)
+  source       — имя поля в ExtractedData: "supplier_card" | "customer_request" | "commercial_terms"
+  field        — имя поля в соответствующем Pydantic-объекте
+  transform    — (опционально) имя трансформации: "shorten_name" | "format_money" | "join_bank" | "join_contact"
+
+Добавление нового поля = одна строка здесь. Код генератора не трогать.
 """
 
-FIELD_MAP: dict[str, dict] = {
-    # --- Из карточки поставщика ---
-    "supplier_full_name":        {"source": "supplier_card", "field": "full_name"},
-    "supplier_short_name":       {"source": "supplier_card", "field": "short_name"},
-    "supplier_inn":              {"source": "supplier_card", "field": "inn"},
-    "supplier_kpp":              {"source": "supplier_card", "field": "kpp"},
-    "supplier_ogrn":             {"source": "supplier_card", "field": "ogrn"},
-    "supplier_legal_address":    {"source": "supplier_card", "field": "legal_address"},
-    "supplier_postal_address":   {"source": "supplier_card", "field": "postal_address"},
-    "supplier_bank":             {"source": "supplier_card", "field": "bank"},
-    "supplier_checking_account": {"source": "supplier_card", "field": "checking_account"},
-    "supplier_corr_account":     {"source": "supplier_card", "field": "correspondent_account"},
-    "supplier_bik":              {"source": "supplier_card", "field": "bik"},
-    "supplier_contact_person":   {"source": "supplier_card", "field": "contact_person"},
-    "supplier_email":            {"source": "supplier_card", "field": "email"},
-    "supplier_phone":            {"source": "supplier_card", "field": "phone"},
-    "supplier_signatory":        {"source": "supplier_card", "field": "signatory"},
-    "supplier_signatory_position": {"source": "supplier_card", "field": "signatory_position"},
-    "supplier_signatory_basis":  {"source": "supplier_card", "field": "signatory_basis"},
+FIELD_MAP: list[dict] = [
+    # --- Карточка поставщика ---
+    {"placeholder": "[Полное наименование участника]",  "source": "supplier_card", "field": "full_name"},
+    {"placeholder": "[Краткое наименование участника]", "source": "supplier_card", "field": "short_name"},
+    {"placeholder": "[ИНН]",                            "source": "supplier_card", "field": "inn"},
+    {"placeholder": "[КПП]",                            "source": "supplier_card", "field": "kpp"},
+    {"placeholder": "[ОГРН]",                           "source": "supplier_card", "field": "ogrn"},
+    {"placeholder": "[Юридический адрес]",              "source": "supplier_card", "field": "legal_address"},
+    {"placeholder": "[Контактное лицо]",                "source": "supplier_card", "field": "contact_person"},
+    {"placeholder": "[E-mail]",                         "source": "supplier_card", "field": "email"},
+    {"placeholder": "[Телефон]",                        "source": "supplier_card", "field": "phone"},
+    {"placeholder": "[ФИО подписанта]",                 "source": "supplier_card", "field": "signatory",          "transform": "shorten_name"},
+    {"placeholder": "[Должность подписанта]",           "source": "supplier_card", "field": "signatory_position"},
+    {"placeholder": "[Основание полномочий]",           "source": "supplier_card", "field": "signatory_basis"},
 
-    # --- Из запроса ТКП ---
-    "purchase_name":             {"source": "customer_request", "field": "purchase_name"},
-    "purchase_number":           {"source": "customer_request", "field": "purchase_number"},
-    "purchase_lot":              {"source": "customer_request", "field": "lot"},
-    "purchase_lot_code":         {"source": "customer_request", "field": "lot_code"},
-    "customer_name":             {"source": "customer_request", "field": "customer_name"},
-    "deadline":                  {"source": "customer_request", "field": "deadline"},
-    "delivery_place":            {"source": "customer_request", "field": "delivery_place"},
-    "delivery_term":             {"source": "customer_request", "field": "delivery_term"},
-    "payment_term":              {"source": "customer_request", "field": "payment_term"},
-    "warranty":                  {"source": "customer_request", "field": "warranty"},
+    # Банковские реквизиты — каждый компонент отдельно
+    {"placeholder": "[Расчетный счет]",        "source": "supplier_card", "field": "checking_account"},
+    {"placeholder": "[Наименование банка]",     "source": "supplier_card", "field": "bank"},
+    {"placeholder": "[Корреспондентский счет]", "source": "supplier_card", "field": "correspondent_account"},
+    {"placeholder": "[БИК]",                   "source": "supplier_card", "field": "bik"},
 
-    # --- Из коммерческих условий ---
-    "commercial_currency":       {"source": "commercial_terms", "field": "currency"},
-    "commercial_vat_rate":       {"source": "commercial_terms", "field": "vat_rate"},
-    "commercial_offer_validity": {"source": "commercial_terms", "field": "offer_validity"},
-    "commercial_total_no_vat":   {"source": "commercial_terms", "field": "total_without_vat"},
-    "commercial_vat_amount":     {"source": "commercial_terms", "field": "vat_amount"},
-    "commercial_total_with_vat": {"source": "commercial_terms", "field": "total_with_vat"},
+    # --- Запрос ТКП ---
+    {"placeholder": "[Предмет закупки]",  "source": "customer_request", "field": "purchase_name"},
+    {"placeholder": "[Номер закупки]",    "source": "customer_request", "field": "purchase_number"},
+
+    # --- Коммерческие условия ---
+    {"placeholder": "[Срок действия предложения, дней]", "source": "commercial_terms", "field": "offer_validity"},
+    {"placeholder": "[Итого без НДС]",    "source": "commercial_terms", "field": "total_without_vat", "transform": "format_money"},
+    {"placeholder": "[Сумма НДС]",        "source": "commercial_terms", "field": "vat_amount",        "transform": "format_money"},
+    {"placeholder": "[Итого с НДС]",      "source": "commercial_terms", "field": "total_with_vat",    "transform": "format_money"},
+
+    # --- Генерируемые значения (не из документов) ---
+    {"placeholder": "[Дата в формате «26» марта 2026 года]", "source": "__generated__", "field": "current_date",     "transform": "current_date"},
+    {"placeholder": "[Исх. номер заявки]",                   "source": "__generated__", "field": "outgoing_number",  "transform": "outgoing_number"},
+]
+
+# Маппинг колонок таблицы номенклатуры (Предложение о цене договора)
+# Индекс колонки → поле из PriceItem (или "nmc" — из CustomerRequestItem)
+PRICE_TABLE_COLUMNS: dict[int, str] = {
+    1: "name",
+    2: "unit",
+    3: "nmc",               # берётся из customer_request.items[i].nmc
+    4: "price_without_vat",
+    5: "quantity",
+    6: "total_without_vat", # применяется format_money
 }
